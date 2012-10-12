@@ -12,7 +12,7 @@
 import re
 import json
 
-from acrylamid.lib.search.languages import en
+from acrylamid.lib.search import en
 
 languages = {
     'en': en.SearchEnglish
@@ -132,23 +132,6 @@ class JavaScriptIndex(object):
         return self.loads(f.read())
 
 
-class WordCollector(NodeVisitor):
-    """
-    A special visitor that collects words for the `IndexBuilder`.
-    """
-
-    def __init__(self, document, lang):
-        NodeVisitor.__init__(self, document)
-        self.found_words = []
-        self.lang = lang
-
-    def dispatch_visit(self, node):
-        if node.__class__ is comment:
-            raise SkipNode
-        if node.__class__ is Text:
-            self.found_words.extend(self.lang.split(node.astext()))
-
-
 class IndexBuilder(object):
     """
     Helper class that creates a searchindex based on the doctrees
@@ -158,8 +141,7 @@ class IndexBuilder(object):
         'json': json
     }
 
-    def __init__(self, env, lang, options):
-        self.env = env
+    def __init__(self, lang, options):
         # filename -> title
         self._titles = {}
         # stemmed word -> set(filenames)
@@ -195,40 +177,40 @@ class IndexBuilder(object):
             format = self.formats[format]
         format.dump(self.freeze(), stream)
 
-    def get_objects(self, fn2index):
-        rv = {}
-        otypes = self._objtypes
-        onames = self._objnames
-        for domainname, domain in self.env.domains.iteritems():
-            for fullname, dispname, type, docname, anchor, prio in \
-                    domain.get_objects():
-                # XXX use dispname?
-                if docname not in fn2index:
-                    continue
-                if prio < 0:
-                    continue
-                prefix, name = rpartition(fullname, '.')
-                pdict = rv.setdefault(prefix, {})
-                try:
-                    typeindex = otypes[domainname, type]
-                except KeyError:
-                    typeindex = len(otypes)
-                    otypes[domainname, type] = typeindex
-                    otype = domain.object_types.get(type)
-                    if otype:
-                        # use unicode() to fire translation proxies
-                        onames[typeindex] = (domainname, type,
-                            unicode(domain.get_type_name(otype)))
-                    else:
-                        onames[typeindex] = (domainname, type, type)
-                if anchor == fullname:
-                    shortanchor = ''
-                elif anchor == type + '-' + fullname:
-                    shortanchor = '-'
-                else:
-                    shortanchor = anchor
-                pdict[name] = (fn2index[docname], typeindex, prio, shortanchor)
-        return rv
+    # def get_objects(self, fn2index):
+    #     rv = {}
+    #     otypes = self._objtypes
+    #     onames = self._objnames
+    #     for domainname, domain in self.env.domains.iteritems():
+    #         for fullname, dispname, type, docname, anchor, prio in \
+    #                 domain.get_objects():
+    #             # XXX use dispname?
+    #             if docname not in fn2index:
+    #                 continue
+    #             if prio < 0:
+    #                 continue
+    #             prefix, name = rpartition(fullname, '.')
+    #             pdict = rv.setdefault(prefix, {})
+    #             try:
+    #                 typeindex = otypes[domainname, type]
+    #             except KeyError:
+    #                 typeindex = len(otypes)
+    #                 otypes[domainname, type] = typeindex
+    #                 otype = domain.object_types.get(type)
+    #                 if otype:
+    #                     # use unicode() to fire translation proxies
+    #                     onames[typeindex] = (domainname, type,
+    #                         unicode(domain.get_type_name(otype)))
+    #                 else:
+    #                     onames[typeindex] = (domainname, type, type)
+    #             if anchor == fullname:
+    #                 shortanchor = ''
+    #             elif anchor == type + '-' + fullname:
+    #                 shortanchor = '-'
+    #             else:
+    #                 shortanchor = anchor
+    #             pdict[name] = (fn2index[docname], typeindex, prio, shortanchor)
+    #     return rv
 
     def get_terms(self, fn2index):
         rv = {}
@@ -247,12 +229,11 @@ class IndexBuilder(object):
         titles = self._titles.values()
         fn2index = dict((f, i) for (i, f) in enumerate(filenames))
         terms = self.get_terms(fn2index)
-        objects = self.get_objects(fn2index)  # populates _objtypes
-        objtypes = dict((v, k[0] + ':' + k[1])
-                        for (k, v) in self._objtypes.iteritems())
-        objnames = self._objnames
-        return dict(filenames=filenames, titles=titles, terms=terms,
-                    objects=objects, objtypes=objtypes, objnames=objnames)
+        # objects = self.get_objects(fn2index)  # populates _objtypes
+        # objtypes = dict((v, k[0] + ':' + k[1])
+        #                 for (k, v) in self._objtypes.iteritems())
+        # objnames = self._objnames
+        return dict(filenames=filenames, titles=titles, terms=terms)
 
     def prune(self, filenames):
         """Remove data for all filenames not in the list."""
@@ -264,12 +245,9 @@ class IndexBuilder(object):
         for wordnames in self._mapping.itervalues():
             wordnames.intersection_update(filenames)
 
-    def feed(self, filename, title, doctree):
+    def feed(self, filename, title, words):
         """Feed a doctree to the index."""
         self._titles[filename] = title
-
-        visitor = WordCollector(doctree, self.lang)
-        doctree.walk(visitor)
 
         def add_term(word, stem=self.lang.stem):
             word = stem(word)
@@ -279,7 +257,7 @@ class IndexBuilder(object):
         for word in self.lang.split(title):
             add_term(word)
 
-        for word in visitor.found_words:
+        for word in self.lang.split(words):
             add_term(word)
 
     def context_for_searchtool(self):
